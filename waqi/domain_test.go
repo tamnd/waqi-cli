@@ -39,3 +39,45 @@ func TestHostWiring(t *testing.T) {
 		t.Errorf("Scheme = %q, want waqi", info.Scheme)
 	}
 }
+
+// TestStationFieldTypes verifies Station uses string for formatted measurements.
+func TestStationFieldTypes(t *testing.T) {
+	s := Station{
+		City:     "Tokyo",
+		AQI:      70,
+		Dominant: "pm25",
+		PM25:     "70.0",
+		PM10:     "22.0",
+		O3:       "-",
+		NO2:      "2.3",
+		SO2:      "-",
+		Temp:     "22.0",
+		Updated:  "2026-06-15 00:00:00",
+	}
+	if s.City == "" {
+		t.Error("City should not be empty")
+	}
+	if s.PM25 != "70.0" {
+		t.Errorf("PM25 = %q, want %q", s.PM25, "70.0")
+	}
+	if s.O3 != "-" {
+		t.Errorf("O3 should be dash when absent, got %q", s.O3)
+	}
+}
+
+// TestSearchResultFieldTypes verifies SearchResult uses string for coordinates.
+func TestSearchResultFieldTypes(t *testing.T) {
+	r := SearchResult{
+		UID:  1437,
+		Name: "Shinjuku, Tokyo",
+		AQI:  "70",
+		Lat:  "35.6800",
+		Lon:  "139.7700",
+	}
+	if r.UID != 1437 {
+		t.Errorf("UID = %d, want 1437", r.UID)
+	}
+	if r.Lat != "35.6800" {
+		t.Errorf("Lat = %q, want %q", r.Lat, "35.6800")
+	}
+}
