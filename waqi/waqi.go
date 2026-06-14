@@ -86,12 +86,24 @@ type SearchResult struct {
 // --- wire types ---
 
 type wireIaqi struct {
-	PM25 *struct{ V float64 `json:"v"` } `json:"pm25"`
-	PM10 *struct{ V float64 `json:"v"` } `json:"pm10"`
-	O3   *struct{ V float64 `json:"v"` } `json:"o3"`
-	NO2  *struct{ V float64 `json:"v"` } `json:"no2"`
-	SO2  *struct{ V float64 `json:"v"` } `json:"so2"`
-	T    *struct{ V float64 `json:"v"` } `json:"t"`
+	PM25 *struct {
+		V float64 `json:"v"`
+	} `json:"pm25"`
+	PM10 *struct {
+		V float64 `json:"v"`
+	} `json:"pm10"`
+	O3 *struct {
+		V float64 `json:"v"`
+	} `json:"o3"`
+	NO2 *struct {
+		V float64 `json:"v"`
+	} `json:"no2"`
+	SO2 *struct {
+		V float64 `json:"v"`
+	} `json:"so2"`
+	T *struct {
+		V float64 `json:"v"`
+	} `json:"t"`
 }
 
 type wireStation struct {
@@ -139,7 +151,9 @@ type wireSearchResponse struct {
 var reLookupGeo = regexp.MustCompile(`^\d+\.\d+,-?\d+\.\d+$`)
 
 // fmtF formats an optional float as "%.1f" or "-" when nil.
-func fmtF(v *struct{ V float64 `json:"v"` }) string {
+func fmtF(v *struct {
+	V float64 `json:"v"`
+}) string {
 	if v == nil {
 		return "-"
 	}
