@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -34,10 +35,10 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		BaseURL:   "https://api.waqi.info",
-		UserAgent: "waqi-cli/0.1.0 (github.com/tamnd/waqi-cli)",
+		UserAgent: "waqi-cli/0.1 (tamnd87@gmail.com)",
 		Token:     "demo",
-		Rate:      200 * time.Millisecond,
-		Timeout:   30 * time.Second,
+		Rate:      500 * time.Millisecond,
+		Timeout:   10 * time.Second,
 		Retries:   3,
 	}
 }
@@ -59,170 +60,147 @@ func NewClient(cfg Config) *Client {
 }
 
 // Station holds the parsed air quality data for one monitoring station.
+// String fields use "%.1f" formatting or "-" when the measurement is absent.
 type Station struct {
-	IDX         int     `json:"idx"`
-	City        string  `json:"city"`
-	CityURL     string  `json:"city_url"`
-	Lat         float64 `json:"lat"`
-	Lng         float64 `json:"lng"`
-	AQI         int     `json:"aqi"`
-	DominantPol string  `json:"dominant_pol"`
-	Time        string  `json:"time"`
-	TZ          string  `json:"tz"`
-	PM25        float64 `json:"pm25"`
-	PM10        float64 `json:"pm10"`
-	NO2         float64 `json:"no2"`
-	O3          float64 `json:"o3"`
-	CO          float64 `json:"co"`
-	SO2         float64 `json:"so2"`
-	Temp        float64 `json:"temp"`
-	Humidity    float64 `json:"humidity"`
-	Pressure    float64 `json:"pressure"`
-	Dew         float64 `json:"dew"`
-	Wind        float64 `json:"wind"`
+	City     string `kit:"id" json:"city"`
+	AQI      int    `json:"aqi"`
+	Dominant string `json:"dominant_pollutant"` // dominentpol field
+	PM25     string `json:"pm25"`               // iaqi.pm25.v, formatted "%.1f" or "-"
+	PM10     string `json:"pm10"`               // iaqi.pm10.v
+	O3       string `json:"o3"`                 // iaqi.o3.v
+	NO2      string `json:"no2"`                // iaqi.no2.v
+	SO2      string `json:"so2"`                // iaqi.so2.v
+	Temp     string `json:"temp_c"`             // iaqi.t.v
+	Updated  string `json:"updated"`            // time.s
 }
 
 // SearchResult is one entry returned by the search endpoint.
 type SearchResult struct {
-	UID  int     `json:"uid"`
-	AQI  string  `json:"aqi"`
-	Name string  `json:"name"`
-	Lat  float64 `json:"lat"`
-	Lng  float64 `json:"lng"`
-	URL  string  `json:"url"`
-	Time string  `json:"time"`
+	UID  int    `kit:"id" json:"uid"`
+	Name string `json:"name"`
+	AQI  string `json:"aqi"`
+	Lat  string `json:"lat"`
+	Lon  string `json:"lon"`
 }
 
 // --- wire types ---
 
-type iaqiVal struct {
-	V float64 `json:"v"`
+type wireIaqi struct {
+	PM25 *struct{ V float64 `json:"v"` } `json:"pm25"`
+	PM10 *struct{ V float64 `json:"v"` } `json:"pm10"`
+	O3   *struct{ V float64 `json:"v"` } `json:"o3"`
+	NO2  *struct{ V float64 `json:"v"` } `json:"no2"`
+	SO2  *struct{ V float64 `json:"v"` } `json:"so2"`
+	T    *struct{ V float64 `json:"v"` } `json:"t"`
 }
 
-type feedResponse struct {
-	Status string `json:"status"`
-	Data   json.RawMessage `json:"data"`
-}
-
-type feedData struct {
-	IDX  int `json:"idx"`
-	AQI  int `json:"aqi"`
-	Time struct {
-		S  string `json:"s"`
-		TZ string `json:"tz"`
-	} `json:"time"`
-	City struct {
+type wireStation struct {
+	AQI         int    `json:"aqi"`
+	DominentPol string `json:"dominentpol"`
+	City        struct {
 		Name string    `json:"name"`
 		Geo  []float64 `json:"geo"`
-		URL  string    `json:"url"`
 	} `json:"city"`
-	DominentPol string `json:"dominentpol"`
-	IAQI        struct {
-		Dew  *iaqiVal `json:"dew"`
-		H    *iaqiVal `json:"h"`
-		NO2  *iaqiVal `json:"no2"`
-		O3   *iaqiVal `json:"o3"`
-		P    *iaqiVal `json:"p"`
-		PM10 *iaqiVal `json:"pm10"`
-		PM25 *iaqiVal `json:"pm25"`
-		CO   *iaqiVal `json:"co"`
-		SO2  *iaqiVal `json:"so2"`
-		T    *iaqiVal `json:"t"`
-		W    *iaqiVal `json:"w"`
-	} `json:"iaqi"`
+	Iaqi wireIaqi `json:"iaqi"`
+	Time struct {
+		S string `json:"s"`
+	} `json:"time"`
 }
 
-type searchResponse struct {
-	Status string `json:"status"`
+type wireResponse struct {
+	Status string      `json:"status"`
+	Data   wireStation `json:"data"`
+}
+
+// wireResponseRaw is used for error extraction (data is a string on error).
+type wireResponseRaw struct {
+	Status string          `json:"status"`
 	Data   json.RawMessage `json:"data"`
 }
 
-type searchEntry struct {
+type wireSearchItem struct {
 	UID  int    `json:"uid"`
-	AQI  string `json:"aqi"`
+	AQI  string `json:"aqi"` // note: string in search results!
 	Time struct {
 		STime string `json:"stime"`
 	} `json:"time"`
 	Station struct {
 		Name string    `json:"name"`
 		Geo  []float64 `json:"geo"`
-		URL  string    `json:"url"`
 	} `json:"station"`
 }
 
-// Feed returns real-time air quality data for the given city slug, station UID
-// (e.g. "@1234"), or geographic coordinates (e.g. "geo:35.68;139.77").
-func (c *Client) Feed(ctx context.Context, city string) (*Station, error) {
-	rawURL := c.cfg.BaseURL + "/feed/" + url.PathEscape(city) + "/?token=" + c.cfg.Token
+type wireSearchResponse struct {
+	Status string           `json:"status"`
+	Data   []wireSearchItem `json:"data"`
+}
+
+// reLookupGeo matches "lat,lon" patterns so Feed can route them as geo lookups.
+var reLookupGeo = regexp.MustCompile(`^\d+\.\d+,-?\d+\.\d+$`)
+
+// fmtF formats an optional float as "%.1f" or "-" when nil.
+func fmtF(v *struct{ V float64 `json:"v"` }) string {
+	if v == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f", v.V)
+}
+
+// Feed returns real-time air quality data for the given location.
+// location can be a city name ("beijing"), a station UID ("@8076"),
+// or "lat,lon" coordinates ("48.8566,2.3522").
+func (c *Client) Feed(ctx context.Context, location string) (*Station, error) {
+	var path string
+	if reLookupGeo.MatchString(location) {
+		// Convert "lat,lon" to "geo:lat;lon"
+		// Replace the comma separator with semicolon for the API
+		for i, ch := range location {
+			if ch == ',' {
+				path = "geo:" + location[:i] + ";" + location[i+1:]
+				break
+			}
+		}
+	} else {
+		path = location
+	}
+
+	rawURL := c.cfg.BaseURL + "/feed/" + url.PathEscape(path) + "/?token=" + c.cfg.Token
 	b, err := c.get(ctx, rawURL)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp feedResponse
-	if err := json.Unmarshal(b, &resp); err != nil {
+	// First try to detect error status.
+	var raw wireResponseRaw
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, fmt.Errorf("decode feed response: %w", err)
 	}
-	if resp.Status != "ok" {
-		// data is a string on error
+	if raw.Status != "ok" {
 		var msg string
-		_ = json.Unmarshal(resp.Data, &msg)
+		_ = json.Unmarshal(raw.Data, &msg)
 		if msg == "" {
 			msg = "unknown error"
 		}
 		return nil, fmt.Errorf("waqi: %s", msg)
 	}
 
-	var d feedData
-	if err := json.Unmarshal(resp.Data, &d); err != nil {
+	var resp wireResponse
+	if err := json.Unmarshal(b, &resp); err != nil {
 		return nil, fmt.Errorf("decode feed data: %w", err)
 	}
+	d := resp.Data
 
 	s := &Station{
-		IDX:         d.IDX,
-		City:        d.City.Name,
-		CityURL:     d.City.URL,
-		AQI:         d.AQI,
-		DominantPol: d.DominentPol,
-		Time:        d.Time.S,
-		TZ:          d.Time.TZ,
-	}
-	if len(d.City.Geo) >= 2 {
-		s.Lat = d.City.Geo[0]
-		s.Lng = d.City.Geo[1]
-	}
-	if d.IAQI.PM25 != nil {
-		s.PM25 = d.IAQI.PM25.V
-	}
-	if d.IAQI.PM10 != nil {
-		s.PM10 = d.IAQI.PM10.V
-	}
-	if d.IAQI.NO2 != nil {
-		s.NO2 = d.IAQI.NO2.V
-	}
-	if d.IAQI.O3 != nil {
-		s.O3 = d.IAQI.O3.V
-	}
-	if d.IAQI.CO != nil {
-		s.CO = d.IAQI.CO.V
-	}
-	if d.IAQI.SO2 != nil {
-		s.SO2 = d.IAQI.SO2.V
-	}
-	if d.IAQI.T != nil {
-		s.Temp = d.IAQI.T.V
-	}
-	if d.IAQI.H != nil {
-		s.Humidity = d.IAQI.H.V
-	}
-	if d.IAQI.P != nil {
-		s.Pressure = d.IAQI.P.V
-	}
-	if d.IAQI.Dew != nil {
-		s.Dew = d.IAQI.Dew.V
-	}
-	if d.IAQI.W != nil {
-		s.Wind = d.IAQI.W.V
+		City:     d.City.Name,
+		AQI:      d.AQI,
+		Dominant: d.DominentPol,
+		PM25:     fmtF(d.Iaqi.PM25),
+		PM10:     fmtF(d.Iaqi.PM10),
+		O3:       fmtF(d.Iaqi.O3),
+		NO2:      fmtF(d.Iaqi.NO2),
+		SO2:      fmtF(d.Iaqi.SO2),
+		Temp:     fmtF(d.Iaqi.T),
+		Updated:  d.Time.S,
 	}
 	return s, nil
 }
@@ -235,36 +213,24 @@ func (c *Client) Search(ctx context.Context, keyword string) ([]SearchResult, er
 		return nil, err
 	}
 
-	var resp searchResponse
+	var resp wireSearchResponse
 	if err := json.Unmarshal(b, &resp); err != nil {
 		return nil, fmt.Errorf("decode search response: %w", err)
 	}
 	if resp.Status != "ok" {
-		var msg string
-		_ = json.Unmarshal(resp.Data, &msg)
-		if msg == "" {
-			msg = "unknown error"
-		}
-		return nil, fmt.Errorf("waqi: %s", msg)
+		return nil, fmt.Errorf("waqi: unknown error")
 	}
 
-	var entries []searchEntry
-	if err := json.Unmarshal(resp.Data, &entries); err != nil {
-		return nil, fmt.Errorf("decode search data: %w", err)
-	}
-
-	out := make([]SearchResult, 0, len(entries))
-	for _, e := range entries {
+	out := make([]SearchResult, 0, len(resp.Data))
+	for _, e := range resp.Data {
 		r := SearchResult{
 			UID:  e.UID,
 			AQI:  e.AQI,
 			Name: e.Station.Name,
-			URL:  e.Station.URL,
-			Time: e.Time.STime,
 		}
 		if len(e.Station.Geo) >= 2 {
-			r.Lat = e.Station.Geo[0]
-			r.Lng = e.Station.Geo[1]
+			r.Lat = fmt.Sprintf("%.4f", e.Station.Geo[0])
+			r.Lon = fmt.Sprintf("%.4f", e.Station.Geo[1])
 		}
 		out = append(out, r)
 	}
@@ -341,12 +307,4 @@ func backoff(attempt int) time.Duration {
 		d = 5 * time.Second
 	}
 	return d
-}
-
-// iaqiFloat extracts a float from an optional iaqi value pointer.
-func iaqiFloat(v *iaqiVal) float64 {
-	if v == nil {
-		return 0
-	}
-	return v.V
 }

@@ -36,8 +36,8 @@ func (Domain) Info() kit.DomainInfo {
 			Long: `waqi fetches real-time air quality data from api.waqi.info.
 
 It returns the AQI, dominant pollutant, individual pollutant measurements
-(PM2.5, PM10, NO2, O3, CO, SO2), and meteorological data for any city worldwide.
-The demo token works for major cities; set WAQI_TOKEN to use a real token.`,
+(PM2.5, PM10, NO2, O3, SO2), and temperature for any city worldwide.
+The demo token works for major cities; set WAQI_TOKEN to use a personal token.`,
 			Site: Host,
 			Repo: "https://github.com/tamnd/waqi-cli",
 		},
@@ -50,15 +50,15 @@ func (Domain) Register(app *kit.App) {
 
 	kit.Handle(app, kit.OpMeta{
 		Name: "feed", Group: "read", Single: true,
-		Summary: "Get air quality for a city or station",
+		Summary: "Get air quality for a city or location",
 		URIType: "station", Resolver: true,
-		Args: []kit.Arg{{Name: "city", Help: "city name, @uid, or geo:lat;lng"}},
+		Args: []kit.Arg{{Name: "location", Help: "city name, lat,lon, or @uid"}},
 	}, getFeed)
 
 	kit.Handle(app, kit.OpMeta{
 		Name: "search", Group: "read", List: true,
 		Summary: "Search monitoring stations by keyword",
-		Args:    []kit.Arg{{Name: "query", Help: "city or station name to search"}},
+		Args:    []kit.Arg{{Name: "keyword", Help: "city or station name to search"}},
 	}, searchStations)
 }
 
@@ -86,20 +86,20 @@ func newClient(_ context.Context, cfg kit.Config) (any, error) {
 // --- inputs ---
 
 type feedInput struct {
-	City   string  `kit:"arg" help:"city name, @uid, or geo:lat;lng"`
-	Client *Client `kit:"inject"`
+	Location string  `kit:"arg" help:"city name, lat,lon, or @uid"`
+	Client   *Client `kit:"inject"`
 }
 
 type searchInput struct {
-	Query  string  `kit:"arg" help:"city or station name to search"`
-	Limit  int     `kit:"flag,inherit" help:"max results"`
-	Client *Client `kit:"inject"`
+	Keyword string  `kit:"arg" help:"city or station name to search"`
+	Limit   int     `kit:"flag,inherit" help:"max results"`
+	Client  *Client `kit:"inject"`
 }
 
 // --- handlers ---
 
 func getFeed(ctx context.Context, in feedInput, emit func(*Station) error) error {
-	s, err := in.Client.Feed(ctx, in.City)
+	s, err := in.Client.Feed(ctx, in.Location)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -107,7 +107,7 @@ func getFeed(ctx context.Context, in feedInput, emit func(*Station) error) error
 }
 
 func searchStations(ctx context.Context, in searchInput, emit func(*SearchResult) error) error {
-	results, err := in.Client.Search(ctx, in.Query)
+	results, err := in.Client.Search(ctx, in.Keyword)
 	if err != nil {
 		return mapErr(err)
 	}
