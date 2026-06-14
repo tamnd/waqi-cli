@@ -1,0 +1,10 @@
+title       = "waqi"
+baseURL     = "https://waqi-cli.tamnd.com/"
+description = "A command line for waqi."
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/waqi-cli"
